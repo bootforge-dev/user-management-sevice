@@ -1,6 +1,18 @@
 spring:
   application:
     name: user-service
+  datasource:
+    url: ${DB_URL:jdbc:mysql://mysql:3310/user_db}
+    username: ${DB_USERNAME:root}
+    password: ${DB_PASSWORD:root}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+
+  jpa:
+    show-sql: true
+    hibernate:
+      ddl-auto: update
+    database-platform: org.hibernate.dialect.MySQLDialect
+    database: mysql
 management:
   endpoints:
     web:

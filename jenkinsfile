@@ -1,0 +1,98 @@
+pipeline {
+    agent any
+
+    tools{
+        maven 'maven-3'
+    }
+
+    environment{
+        AWS_REGION='ap-south-2'
+        AWS_ACCOUNT_ID='805102729548'
+        ECR_REPOSITORY='user-management-service'
+        ECR_REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+        IMAGE_NAME="${ECR_REGISTRY}/${ECR_REPOSITORY}"
+        DB_URL='jdbc:mysql://dev-environment-db.cz06cycykaha.ap-south-2.rds.amazonaws.com:3306/user_db'
+        DB_USERNAME='${DB_USERNAME}'
+        DB_PASSWORD='${DB_PASSWORD}'
+    }
+
+    stages {
+        stage('Clean workspace') {
+            steps {
+                deleteDir()
+            }
+        }
+        stage('Clone the github repository'){
+            steps{
+                echo 'Cloning the github repository'
+                git branch:'main',url:'https://github.com/bootforge-dev/user-management-sevice.git'
+            }
+        }
+        stage('Maven Build artifact'){
+            steps{
+                echo 'Build artifact using maven'
+                sh 'mvn clean package -DskipTests'
+            }
+        }
+        stage('Build Docker Image'){
+            steps{
+                echo 'Building Docker Image'
+                sh '''
+                       docker build \
+                       -t ${IMAGE_NAME}:${BUILD_NUMBER} .
+                '''
+            }
+        }
+        stage('Login in to ECR'){
+            steps{
+                echo 'login to ecr repositoy'
+                sh '''
+                    aws ecr get-login-password --region ${AWS_REGION} | \
+                        docker login \
+                        --username AWS \
+                        --password-stdin ${ECR_REGISTRY}
+                '''
+            }
+        }
+        stage('Push Docker image to ECR Repo'){
+            steps{
+                echo 'Push the docker image to ecr repository'
+                sh '''
+                    docker push ${IMAGE_NAME}:${BUILD_NUMBER}
+                '''
+                echo 'Image Pushed ${IMAGE_NAME}:${BUILD_NUMBER}'
+            }
+        }
+        stage('Remove Old Docker Images') {
+            steps {
+                echo 'Removing old Docker images'
+
+                sh '''
+                    docker images ${IMAGE_NAME} \
+                    --format "{{.Repository}}:{{.Tag}}" |
+                    grep -v ":${BUILD_NUMBER}$" |
+                    xargs -r docker rmi -f || true
+                '''
+            }
+        }
+        stage('Run Docker Container'){
+            steps{
+                echo 'Running latest docker image'
+                withCredentials([string(credentialsId: 'DB_PASSWORD', variable: 'DB_PASSWORD'), string(credentialsId: 'DB_USER', variable: 'DB_USERNAME')]) {
+                        sh '''
+                            docker stop user-service || true
+                            docker rm user-service || true
+
+                            docker run -d \
+                            --name user-service \
+                            -e DB_URL="${DB_URL}" \
+                            -e DB_USERNAME="${DB_USERNAME}" \
+                            -e DB_PASSWORD="${DB_PASSWORD}" \
+                            -p 9001:8080 \
+                            ${IMAGE_NAME}:${BUILD_NUMBER}
+                        '''
+                    }
+            }
+        }
+    }
+}
